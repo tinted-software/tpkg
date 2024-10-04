@@ -1,14 +1,10 @@
-#include <chrono>
-#include <cstring>
+extern "C" {
 #include <fcntl.h>
-#include <filesystem>
-#include <iostream>
-#include <queue>
-#include <string>
 #include <sys/wait.h>
-#include <thread>
 #include <unistd.h>
-#include <vector>
+}
+
+import std;
 
 class Task {
 public:
@@ -53,7 +49,8 @@ private:
 
   void printProgress() {
     std::cout << "┏━ Dependency Graph:\n";
-    for (const auto &task : tasks) {
+    for (auto it = tasks.begin(); it != tasks.end(); ++it) {
+      const auto &task = *it;
       std::cout << "┃ \e[0;33m⏵ " << task.name << "\e[0m ⏱ " << task.duration
                 << "s\n";
     }
@@ -61,9 +58,14 @@ private:
 
     int completed = 0;
     int paused = 0;
-    for (const auto &task : tasks) {
-      if (task.completed)
+    for (auto it = tasks.begin(); it != tasks.end();) {
+      const auto &task = *it;
+      if (task.completed) {
         completed++;
+        it = tasks.erase(it);
+      } else {
+        ++it;
+      }
     }
 
     total_time += 1;
@@ -76,8 +78,7 @@ private:
 void run_command(Task &task) {
   int pipefd[2];
   if (pipe(pipefd) == -1) {
-    perror("pipe");
-    exit(1);
+    throw std::runtime_error("pipe");
   }
 
   auto temporary_directory =
@@ -86,8 +87,7 @@ void run_command(Task &task) {
 
   pid_t pid = fork();
   if (pid == -1) {
-    perror("fork");
-    exit(1);
+    throw std::runtime_error("fork");
   } else if (pid == 0) {
     // Child process
     close(pipefd[0]);
@@ -104,8 +104,7 @@ void run_command(Task &task) {
     args.push_back(nullptr);
 
     execvp(args[0], args.data());
-    perror("execvp");
-    exit(1);
+    throw std::runtime_error("Command failed to run");
   } else {
     // Parent process
     close(pipefd[1]);
@@ -124,7 +123,6 @@ bool update_task_status(Task &task) {
   if (result == 0) {
     return false; // Task is still running
   } else if (result == -1) {
-    perror("waitpid");
     return true; // Assume task is completed due to error
   } else {
     task.completed = true;
@@ -144,9 +142,7 @@ void readTaskOutput(Task &task) {
 
 int main() {
   std::vector<Task> tasks = {
-      Task("cmake-bootstrap-minimal",
-           {"sh", "-c",
-            "cmake -GNinja -S /home/theo/src/cmake && cmake --build ."}),
+      Task("cmake-bootstrap-minimal", {"nu", "-c", "sleep 5sec"}),
   };
 
   ProgressBar progress_bar(tasks);
