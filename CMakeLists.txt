@@ -10,14 +10,35 @@ project(tpkg)
 set(CMAKE_CXX_CLANG_TIDY clang-tidy -p ${CMAKE_BINARY_DIR})
 set(CMAKE_CXX_MODULE_STD ON)
 
+add_library(
+	tpkg_core
+)
+target_sources(
+	tpkg_core
+	PUBLIC
+	FILE_SET CXX_MODULES FILES
+	src/derivation.cxx
+	src/builder.cxx
+)
+target_compile_features(
+	tpkg_core
+	PUBLIC
+	cxx_std_26
+)
+
 add_executable(
 	tpkg
-	main.cxx
+	src/main.cxx
 )
 target_compile_features(
 	tpkg
 	PUBLIC
 	cxx_std_26
+)
+target_link_libraries(
+	tpkg
+	PUBLIC
+	tpkg_core
 )
 
 install(TARGETS tpkg) 

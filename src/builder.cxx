@@ -1,17 +1,22 @@
+module;
+
 extern "C" {
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 }
 
-import std;
+export module tpkg.builder;
 
-class Task {
+import std;
+import tpkg.derivation;
+
+namespace tpkg {
+
+export class TaskStatus {
 public:
-  Task(const std::string &name, const std::vector<std::string> &command)
-      : name(name), command(command), duration(0), completed(false), pid(-1) {}
-  std::string name;
-  std::vector<std::string> command;
+  TaskStatus(const Derivation &derivation) : derivation(derivation) {}
+  Derivation derivation;
   int duration;
   bool completed;
   pid_t pid;
@@ -21,9 +26,9 @@ public:
   void add_log(const std::string &log) { logs.push(log); }
 };
 
-class ProgressBar {
+export class ProgressTree {
 public:
-  ProgressBar(std::vector<Task> &tasks) : tasks(tasks), total_time(0) {}
+  ProgressTree(std::vector<TaskStatus> &tasks) : tasks(tasks), total_time(0) {}
 
   void update() {
     std::cout << "\033[2J\033[H"; // Clear screen and move cursor to top-left
@@ -32,14 +37,14 @@ public:
   }
 
 private:
-  std::vector<Task> &tasks;
+  std::vector<TaskStatus> &tasks;
   int total_time;
 
   void printLogs() {
     for (const auto &task : tasks) {
       std::queue<std::string> temp_logs = task.logs;
       while (!temp_logs.empty()) {
-        std::cout << task.name << "> " << temp_logs.front() << "\n";
+        std::cout << task.derivation.name << "> " << temp_logs.front() << "\n";
         temp_logs.pop();
       }
 
@@ -51,8 +56,8 @@ private:
     std::cout << "┏━ Dependency Graph:\n";
     for (auto it = tasks.begin(); it != tasks.end(); ++it) {
       const auto &task = *it;
-      std::cout << "┃ \e[0;33m⏵ " << task.name << "\e[0m ⏱ " << task.duration
-                << "s\n";
+      std::cout << "┃ \e[0;33m▶️  " << task.derivation.name << "\e[0m ⏱ "
+                << task.duration << "s\n";
     }
     std::cout << "┣━━━ Builds\n";
 
@@ -69,20 +74,20 @@ private:
     }
 
     total_time += 1;
-    std::cout << "┗━ ∑ \e[0;33m⏵ " << tasks.size() << " \e[0;32m│ ✔ "
+    std::cout << "┗━ \e[0;33m▶️  " << tasks.size() << " \e[0;32m│ ✔ "
               << completed << " \e[0;34m│ ⏸ " << paused << "\e[0m │ ⏱ "
               << total_time << "s\n";
   }
 };
 
-void run_command(Task &task) {
+void build_derivation(const Derivation &derivation, TaskStatus &status) {
   int pipefd[2];
   if (pipe(pipefd) == -1) {
     throw std::runtime_error("pipe");
   }
 
   auto temporary_directory =
-      std::filesystem::temp_directory_path() / ("tpkg-" + task.name);
+      std::filesystem::temp_directory_path() / ("tpkg-" + derivation.name);
   std::filesystem::create_directory(temporary_directory);
 
   pid_t pid = fork();
@@ -98,7 +103,7 @@ void run_command(Task &task) {
     std::filesystem::current_path(temporary_directory);
 
     std::vector<char *> args;
-    for (const auto &arg : task.command) {
+    for (const auto &arg : derivation.builder) {
       args.push_back(const_cast<char *>(arg.c_str()));
     }
     args.push_back(nullptr);
@@ -108,16 +113,16 @@ void run_command(Task &task) {
   } else {
     // Parent process
     close(pipefd[1]);
-    task.pid = pid;
-    task.fd = pipefd[0];
+    status.pid = pid;
+    status.fd = pipefd[0];
 
     // Set the pipe to non-blocking mode
-    int flags = fcntl(task.fd, F_GETFL, 0);
-    fcntl(task.fd, F_SETFL, flags | O_NONBLOCK);
+    int flags = fcntl(status.fd, F_GETFL, 0);
+    fcntl(status.fd, F_SETFL, flags | O_NONBLOCK);
   }
 }
 
-bool update_task_status(Task &task) {
+bool update_task_status(TaskStatus &task) {
   int status;
   pid_t result = waitpid(task.pid, &status, WNOHANG);
   if (result == 0) {
@@ -130,25 +135,21 @@ bool update_task_status(Task &task) {
   }
 }
 
-void readTaskOutput(Task &task) {
-  char buffer[1024];
+void readTaskOutput(TaskStatus &task) {
+  std::array<char, 1024> buffer;
   ssize_t bytesRead;
 
-  while ((bytesRead = read(task.fd, buffer, sizeof(buffer) - 1)) > 0) {
+  while ((bytesRead = read(task.fd, buffer.data(), buffer.size() - 1)) > 0) {
     buffer[bytesRead] = '\0';
-    task.add_log(std::string(buffer));
+    task.add_log(std::string(buffer.data(), buffer.size()));
   }
 }
 
-int main() {
-  std::vector<Task> tasks = {
-      Task("cmake-bootstrap-minimal", {"nu", "-c", "sleep 5sec"}),
-  };
-
-  ProgressBar progress_bar(tasks);
+export void build_derivations(std::vector<TaskStatus> &tasks) {
+  ProgressTree progress_bar(tasks);
 
   for (auto &task : tasks) {
-    run_command(task);
+    build_derivation(task.derivation, task);
   }
 
   while (true) {
@@ -173,6 +174,6 @@ int main() {
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
   }
-
-  return 0;
 }
+
+} // namespace tpkg
